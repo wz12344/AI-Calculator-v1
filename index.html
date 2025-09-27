@@ -464,12 +464,13 @@
         // 2. Создаем системный запрос
         let promptText;
         if (expression.includes('=')) {
-            promptText = `Solve the equation for X: ${expressionToSolve}. If it is not possible, simplify the left side and the right side.`
+            promptText = `Solve the equation for X: ${expressionToSolve}. Provide the final solution for X or the fully simplified form of the equation if it cannot be isolated.`;
         } else {
-            promptText = `Simplify the mathematical expression as much as possible, maintaining constants like pi and variables like X, Y: ${expressionToSolve}. Apply all relevant trigonometric identities (e.g., sin^2(x) + cos^2(x) = 1).`
+            promptText = `Simplify the mathematical expression as much as possible: ${expressionToSolve}. Apply all relevant trigonometric identities (e.g., sin^2(x) + cos^2(x) = 1). Maintain constants like pi and variables like X, Y.`;
         }
 
-        const systemPrompt = "You are a world-class symbolic math engine. Analyze the user's expression. If it is an equation, solve for X. If it is an expression, simplify it as much as possible, maintaining constants like $\\pi$ and variables like $X$ and $Y$. The final result MUST be a single, simplified, correct mathematical string in LaTeX format, enclosed in a single pair of $ symbols (e.g., $X = 3$ or $\\sin(x^2)$). DO NOT include any explanatory text, only the final LaTeX string.";
+        // Упрощенный системный промпт для надежности
+        const systemPrompt = "You are a specialized mathematical engine. Your analysis must be concise. Analyze the user's expression/equation. The final result MUST be a single, simplified mathematical string in LaTeX format, enclosed in a single pair of $ symbols (e.g., $X = 3$ or $\\sin(x^2)$). DO NOT include any explanatory text, only the final LaTeX string.";
 
 
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
@@ -511,12 +512,14 @@
             const text = apiResult?.candidates?.[0]?.content?.parts?.[0]?.text;
             
             if (text) {
-                // Убеждаемся, что результат начинается и заканчивается символом $
+                // Ищем LaTeX в ответе
                 const cleanResult = text.trim();
+                
+                // Проверяем, окружен ли ответ долларами. Если нет - окружаем.
                 if (cleanResult.startsWith('$') && cleanResult.endsWith('$')) {
                      result = cleanResult;
                 } else {
-                     // Если AI не дал LaTeX, показываем текст как есть
+                     // Добавляем доллары, чтобы MathJax попытался отрендерить
                      result = `$${cleanResult}$`;
                 }
                 expression = ''; // Сбрасываем выражение после решения
@@ -527,7 +530,7 @@
 
         } catch (e) {
             console.error("Symbolic Solver Error:", e);
-            result = 'Ошибка';
+            result = 'Ошибка AI';
             showMessage(`Ошибка AI: ${e.message}. Попробуйте упростить выражение.`);
         } finally {
             // 3. Скрываем загрузку и обновляем экран
@@ -959,9 +962,22 @@
                 if (response.ok) {
                     const result = await response.json();
                     const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    
+                    // --- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ JSON ПАРСИНГА ---
                     if (jsonText) {
-                        return JSON.parse(jsonText);
+                         try {
+                            return JSON.parse(jsonText);
+                         } catch (e) {
+                            // Если JSON.parse не сработал, попробуем исправить и перепарсить (например, удаляем лишний текст до/после JSON)
+                            const match = jsonText.match(/\{[\s\S]*\}/);
+                            if (match) {
+                                return JSON.parse(match[0]);
+                            }
+                            throw new Error("AI вернул невалидный JSON.");
+                         }
                     }
+                    // ---------------------------------------------
+
                 } else if (response.status === 429 || response.status >= 500) {
                     if (i < maxRetries - 1) {
                         await new Promise(resolve => setTimeout(resolve, delay));
@@ -977,7 +993,6 @@
                     await new Promise(resolve => setTimeout(resolve, delay));
                     delay *= 2;
                 } else {
-                    // В случае ошибки парсинга, может быть невалидный JSON, но мы должны хотя бы показать ошибку
                     throw new Error(`Ошибка сети/парсинга: ${error.message}`);
                 }
             }
@@ -1014,7 +1029,10 @@
                 
                 lessonProblems.innerHTML = '';
                 
-                lessonData.practice_problems.forEach((item, index) => {
+                // Проверка, что practice_problems это массив, иначе пустой массив
+                const problems = Array.isArray(lessonData.practice_problems) ? lessonData.practice_problems : [];
+
+                problems.forEach((item, index) => {
                     const problemElement = document.createElement('div');
                     problemElement.className = 'border-t border-gray-600 pt-3';
                     
@@ -1041,10 +1059,10 @@
                 }
 
             } else {
-                showMessage("Не удалось сгенерировать материал. Попробуйте другой запрос.");
+                showMessage("Не удалось сгенерировать материал. Попробуйте другой запрос или убедитесь, что тема корректна.");
             }
         } catch (error) {
-            showMessage(`Ошибка генерации: ${error.message}`);
+            showMessage(`Ошибка генерации: ${error.message}. Возможно, AI вернул некорректный формат.`);
             console.error("Lesson Generator Error:", error);
         } finally {
             lessonLoadingIndicator.classList.add('hidden');
